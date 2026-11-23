@@ -1,41 +1,58 @@
 <?php
-/*
+/**
  * Plugin Name: Paying Subscribers
- * Description: Creates a new role called paying-subscriber, and automatically toggles users between subscriber and paying-subscriber based on their woocommerce subscription status
+ * Description: Grants SkyWall access after a verified Stripe subscription purchase. Keeps existing Woo subscription support.
+ * Version: 1.0.0
+ * Requires PHP: 7.4
  */
+defined('ABSPATH') || exit;
 
-function create_paying_subscriber_role() {
-    // same permissions as the subscriber role, just with a different moniker to indicate revenue
-    add_role(
-        'paying-subscriber',
-        'Paying Subscriber',
-        array(
-            'read' => true,
-            'level_0' => true,
-        )
-    );
+require_once __DIR__ . '/includes/settings.php';
+require_once __DIR__ . '/includes/stripe.php';
+require_once __DIR__ . '/includes/access.php';
+require_once __DIR__ . '/includes/downloads.php';
+require_once __DIR__ . '/includes/claim.php';
+
+// Keep WordPress's native set-password URL; add the store destination for these purchasers only.
+add_filter('wp_new_user_notification_email', function ($email, $user) {
+    if (skywall_has_stripe_access($user->ID) && function_exists('wc_get_page_permalink')) {
+        $account = wc_get_page_permalink('myaccount');
+        if ($account) { $email['message'] .= "\nAfter setting your password, sign in to get your SkyWall installer or Android setup instructions:\n" . $account . "\n"; }
+    }
+    return $email;
+}, 10, 2);
+
+function skywall_register_paid_role() {
+    add_role('paying-subscriber', 'Paying Subscriber', array('read' => true, 'level_0' => true));
 }
-add_action('wp_loaded', 'create_paying_subscriber_role');
+register_activation_hook(__FILE__, 'skywall_register_paid_role');
+add_action('init', 'skywall_register_paid_role');
 
-function toggle_roles($subscription, $new_status, $old_status) {
-    // Get an instance of the customer WP_User Object
-    $order = wc_get_order($subscription->get_parent_id());
-    $user = $order->get_user();
-
-    // Check that it's not a guest customer
-    if (is_a($user, 'WP_User') && $user->ID > 0) {
-        if ($new_status == 'active') {
-            if (in_array('subscriber', $user->roles)) {
-                $user->remove_role('subscriber');
+/** Never use set_role() on an existing account: paid access is an additional role. */
+function skywall_woo_status_changed($subscription, $new_status, $old_status) {
+    if (!is_object($subscription) || !is_callable(array($subscription, 'get_user_id'))) {
+        return;
+    }
+    $id = (int) $subscription->get_user_id();
+    $user = $id > 0 ? get_userdata($id) : false;
+    if (!$user) {
+        return;
+    }
+    if ('active' === $new_status) {
+        update_user_meta($id, '_skywall_woo_paid', 'yes');
+        $user->add_role('paying-subscriber');
+    } elseif (in_array($new_status, array('expired', 'cancelled', 'on-hold'), true)) {
+        if (function_exists('wcs_user_has_subscription') && wcs_user_has_subscription($id, '', 'active')) {
+            return;
+        }
+        delete_user_meta($id, '_skywall_woo_paid');
+        if (!skywall_has_stripe_access($id)) {
+            // Users of the old plugin may have no underlying role to fall back on.
+            if (array('paying-subscriber') === array_values($user->roles)) {
+                $user->add_role('subscriber');
             }
-            $user->set_role('paying-subscriber');
-        } else if ($new_status == 'cancelled' || $new_status == 'on-hold' || $new_status == 'expired') {
-            if (in_array('paying-subscriber', $user->roles)) {
-                $user->remove_role('paying-subscriber');
-            }
-            $user->set_role('subscriber');
+            $user->remove_role('paying-subscriber');
         }
     }
 }
-//Toggle roles based on subscription status - https://woocommerce.com/document/subscriptions/develop/action-reference/#section-3
-add_action('woocommerce_subscription_status_updated', 'toggle_roles', 100, 3);
+add_action('woocommerce_subscription_status_updated', 'skywall_woo_status_changed', 100, 3);
