@@ -73,6 +73,9 @@ $grant_key=skywall_access_key('grants',$id,'test'); $grants=get_option($grant_ke
 sw_check($renewal->get_status()===200 && ($grants[$sub]['until'] ?? 0)===$end,'paid renewal extends the stored entitlement without a second checkout');
 $snapshot['cancel_at_period_end']=true; $post('evt_'.$seed.'e','customer.subscription.updated',$snapshot);
 sw_check(skywall_has_stripe_access($id),'cancellation scheduled for period end preserves access');
+$snapshot['cancel_at']=$now+3600; $snapshot['items']['data'][0]['current_period_end']=$now+3600;
+$post('evt_'.$seed.'rescheduled','customer.subscription.updated',$snapshot);
+sw_check((get_option($grant_key)[$sub]['until'] ?? 0)===$end,'active cancellation reschedule cannot erase previously paid time');
 $snapshot['status']='canceled'; $post('evt_'.$seed.'f','customer.subscription.deleted',$snapshot); $post('evt_'.$seed.'g','invoice.paid',$invoice);
 $grant_key = skywall_access_key('grants',$id,'test'); $grants=get_option($grant_key,array());
 sw_check(($grants[$sub]['until'] ?? 0) === $end && skywall_has_stripe_access($id), 'confirmed prepaid time survives cancellation and stale invoice');
@@ -88,6 +91,7 @@ wp_set_current_user(0); sw_check(strpos(do_shortcode('[skywall_downloads]'),'tes
 $existing_mail='existing-'.$seed.'@example.invalid'; $existing_password=wp_generate_password(32,true);
 $existing_id=wp_insert_user(array('user_login'=>'existing-'.$seed,'user_email'=>$existing_mail,'user_pass'=>$existing_password,'role'=>'editor'));
 $customer.='existing'; $sub.='existing'; $snapshot['customer']=$customer; $snapshot['id']=$sub; $snapshot['status']='active'; $snapshot['cancel_at_period_end']=false;
+unset($snapshot['cancel_at']); $snapshot['items']['data'][0]['current_period_end']=$end;
 $snapshot['latest_invoice']['customer']=$customer; $snapshot['latest_invoice']['parent']['subscription_details']['subscription']=$sub;
 $checkout['customer_details']['email']=$existing_mail; $checkout['customer']=$customer; $checkout['subscription']=$sub;
 $post('evt_'.$seed.'claim',$ct,$checkout);

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Paying Subscribers
  * Description: Grants SkyWall access after a verified Stripe subscription purchase. Keeps existing Woo subscription support.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Requires PHP: 7.4
  */
 defined('ABSPATH') || exit;

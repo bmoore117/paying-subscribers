@@ -120,7 +120,9 @@ function skywall_paid_window($sub, $customer, $sub_id, $price, $previous) {
     $limit = max($item_ends);
 
     if (!empty($sub['cancel_at'])) { $limit = min($limit, (int) $sub['cancel_at']); }
-    $until = min($previous, $limit);
+    // A changed Stripe schedule bounds *new* time only. A shorter cancel_at or
+    // current_period_end is not evidence that the earlier paid term was refunded.
+    $until = $previous;
     $inv = $sub['latest_invoice'];
     // past_due: no new time; grace is only the remainder of a previously proven paid term.
     if ($sub['status'] === 'past_due' || !is_array($inv) || ($inv['status'] ?? '') !== 'paid' || ($inv['amount_paid'] ?? 0) <= 0) { return $until; }

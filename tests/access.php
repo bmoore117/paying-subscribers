@@ -130,7 +130,10 @@ $line=&$old['latest_invoice']['lines']['data'][0]; $line['price']=array('id'=>'p
 $snapshots['sub_A']=$old; send_event('invoice.paid',$oldinv); $gkey=skywall_access_key('grants',$id,'test'); check(get_option($gkey)['sub_A']['until']===$old['current_period_end'],'pinned legacy invoice line extends paid window on renewal');
 $options[$gkey]['sub_A']['until']=time()-1; check(!skywall_has_stripe_access($id) && paid_role($id),'download gate expires without Stripe, cron or another webhook'); skywall_expire_paid_window($id,'test',time()-1); check(!paid_role($id),'local expiry job removes stale role');
 $snapshots['sub_A']=$initial; updated('sub_A');
-$snapshots['sub_A']['cancel_at']=time()-1; updated('sub_A'); check(!skywall_has_stripe_access($id) && !paid_role($id),'cancel_at bounds the paid window');
+$stored=get_option($gkey)['sub_A']['until']; $snapshots['sub_A']['cancel_at']=time()+3600;
+$snapshots['sub_A']['items']['data'][0]['current_period_end']=$snapshots['sub_A']['cancel_at']; updated('sub_A');
+check(get_option($gkey)['sub_A']['until']===$stored,'active schedule change cannot shorten the already paid term');
+$snapshots['sub_A']['status']='canceled'; updated('sub_A'); check(get_option($gkey)['sub_A']['until']===$stored && paid_role($id),'deletion after active schedule change does not reduce original paid time');
 foreach (array('manual','woo','wcs') as $i=>$source) {
     $customer='cus_'.$source; $sub='sub_'.$source; $email=$source.'@example.invalid'; $uid=wp_insert_user(array('user_login'=>$source,'user_email'=>$email,'user_pass'=>'unchanged','role'=>'editor'));
     if ($source==='manual') { $users[$uid]->add_role('paying-subscriber'); }
