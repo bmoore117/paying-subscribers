@@ -182,22 +182,32 @@ function skywall_apply_event(array $event) {
         }
         $customer_key = skywall_access_key('customer', $customer, $mode);
         $known_user = (int) get_option($customer_key, 0);
-        if (!empty($binding['claim_user'])) {
-            $pinned = (int) $binding['claim_user'];
-            if (($known_user && $known_user !== $pinned) || !skywall_claim_matches_email($pinned, $binding)) { return true; }
-            // An outstanding claim must pass its own confirmation, including when a second subscription
-            // established the customer mapping in the meantime. Never rematch a recycled email address.
-            $claim = skywall_claim_required($pinned, $sub_id, $customer, $mode);
-            if ($claim !== false) { return $claim; }
-        }
+
         $id = $binding['user'] ?: $known_user;
         if ($known_user && $id !== $known_user) { return skywall_stripe_retry(); }
         if ($id && !get_userdata($id)) { return true; }
         $grants = $id ? get_option(skywall_access_key('grants', $id, $mode), array()) : array();
         $previous = $grants[$sub_id] ?? null;
-        $until = skywall_paid_window($sub, $customer, $sub_id, $price, $previous && $previous['price'] === $price ? $previous['until'] : 0);
+        $previous_until = $previous && $previous['price'] === $price ? $previous['until'] : 0;
+        $evidence = $binding['pending_term'] ?? array();
+        if (($evidence['price'] ?? '') === $price) { $previous_until = max($previous_until, (int) $evidence['until']); }
+        $until = skywall_paid_window($sub, $customer, $sub_id, $price, $previous_until);
         if (is_wp_error($until)) { return $until; }
+        // Bank verified billing evidence even while identity confirmation is outstanding. It is
+        // subscription/mode/price scoped and is never read by the user-facing access check.
+        if (!$binding['user']) {
+            if ($until > time()) { $binding['pending_term'] = array('price'=>$price,'until'=>$until); }
+            else { unset($binding['pending_term']); }
+            $result = skywall_access_store($key, $binding);
+            if (is_wp_error($result)) { return $result; }
+        }
         if (!$binding['user'] && $until <= time()) { return true; } // Pending mappings alone confer nothing.
+        if (!empty($binding['claim_user'])) {
+            $pinned = (int) $binding['claim_user'];
+            if (($known_user && $known_user !== $pinned) || !skywall_claim_matches_email($pinned, $binding)) { return true; }
+            $claim = skywall_claim_required($pinned, $sub_id, $customer, $mode);
+            if ($claim !== false) { return $claim; }
+        }
         $welcome_key = skywall_access_key('welcome', $sub_id, $mode);
         if (!$id) {
             $user = get_user_by('email', $binding['email']);
@@ -230,6 +240,11 @@ function skywall_apply_event(array $event) {
         else { unset($grants[$sub_id]); }
         $result = skywall_access_store(skywall_access_key('grants', $id, $mode), $grants);
         if (is_wp_error($result)) { return $result; }
+        if (isset($binding['pending_term'])) {
+            unset($binding['pending_term']); // Clear only after the user-bound grant is durable.
+            $result = skywall_access_store($key, $binding);
+            if (is_wp_error($result)) { return $result; }
+        }
         if ($until > time()) {
             $result = skywall_access_schedule($id, $mode, $until);
             if (is_wp_error($result)) { return $result; }

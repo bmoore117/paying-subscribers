@@ -96,9 +96,22 @@ $snapshot['latest_invoice']['customer']=$customer; $snapshot['latest_invoice']['
 $checkout['customer_details']['email']=$existing_mail; $checkout['customer']=$customer; $checkout['subscription']=$sub;
 $post('evt_'.$seed.'claim',$ct,$checkout);
 sw_check(!skywall_has_stripe_access($existing_id) && !in_array('paying-subscriber',get_userdata($existing_id)->roles,true),'first email match waits for account holder confirmation');
+$snapshot['status']='canceled';
+$post('evt_'.$seed.'pendingcancel','customer.subscription.deleted',$snapshot);
+sw_check(!skywall_has_stripe_access($existing_id),'cancellation while waiting does not bypass account confirmation');
 wp_set_current_user($existing_id); ob_start(); skywall_claim_dashboard(); $form=ob_get_clean();
 preg_match_all('/name="([^"]+)" value="([^"]+)"/',$form,$fields,PREG_SET_ORDER); $_POST=array(); foreach($fields as $field) { $_POST[$field[1]]=html_entity_decode($field[2]); }
 $_SERVER['REQUEST_METHOD']='POST'; sw_check(skywall_claim_process()===true && skywall_has_stripe_access($existing_id),'signed-in owner confirms and receives the paid entitlement');
+sw_check((get_option(skywall_access_key('grants',$existing_id,'test'))[$sub]['until'] ?? 0)===$end && in_array('paying-subscriber',get_userdata($existing_id)->roles,true), 'confirmation after cancellation grants only the original paid remainder and app role');
 sw_check(wp_authenticate($existing_mail,$existing_password) instanceof WP_User && in_array('editor',get_userdata($existing_id)->roles,true),'existing password and original role are preserved');
 sw_check(is_wp_error(skywall_claim_process()),'completed claim cannot be submitted a second time');
+// A delayed claim after its *original* paid period has elapsed cannot resurrect access.
+$old_id=$id; $customer.='expired'; $sub.='expired'; $snapshot['customer']=$customer; $snapshot['id']=$sub; $snapshot['status']='active';
+$snapshot['latest_invoice']['customer']=$customer; $snapshot['latest_invoice']['parent']['subscription_details']['subscription']=$sub;
+$checkout['customer_details']['email']=$mail; $checkout['customer']=$customer; $checkout['subscription']=$sub;
+$post('evt_'.$seed.'expireclaim',$ct,$checkout); $pending_key=skywall_access_key('subscription',$sub,'test'); $pending=get_option($pending_key);
+sw_check($pending['pending_term']['until']===$end && !$pending['user'] && !skywall_has_stripe_access($old_id),'pending paid evidence alone cannot be used for a download');
+$pending['pending_term']['until']=time()-1; update_option($pending_key,$pending,false); $snapshot['status']='canceled';
+wp_set_current_user($old_id); ob_start(); skywall_claim_dashboard(); $form=ob_get_clean(); preg_match_all('/name="([^"]+)" value="([^"]+)"/',$form,$fields,PREG_SET_ORDER); $_POST=array(); foreach($fields as $field) { $_POST[$field[1]]=html_entity_decode($field[2]); }
+skywall_claim_process(); sw_check(!skywall_has_stripe_access($old_id) && !in_array('paying-subscriber',get_userdata($old_id)->roles,true),'claim cannot restart an expired canceled term');
 WP_CLI::success('Local WordPress/WooCommerce integration completed; Stripe HTTP and email delivery were simulated.');
